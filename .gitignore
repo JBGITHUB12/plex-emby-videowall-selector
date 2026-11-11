@@ -1,0 +1,23 @@
+# Local secrets & runtime configuration
+.env
+.env.*
+!.env.example
+config.json
+config.local.json
+
+# Pre-encoded clip storage & browser profiles
+wall_data/
+clips/
+*.mp4
+*.mov
+*.mkv
+*.tmp
+*.log
+
+# Python & OS artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+Thumbs.db

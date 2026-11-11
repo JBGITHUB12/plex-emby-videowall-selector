@@ -1,0 +1,29 @@
+services:
+  videowall-server:
+    build: .
+    container_name: videowall-server
+    restart: unless-stopped
+    ports:
+      - "${PORT:-18500}:18500"
+    env_file:
+      - .env
+    environment:
+      - WALL_DIR=/data/wall_data
+      - PORT=18500
+    volumes:
+      - ./wall_data:/data/wall_data
+    command: ["python", "server.py"]
+
+  videowall-encoder:
+    build: .
+    container_name: videowall-encoder
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - WALL_DIR=/data/wall_data
+    volumes:
+      - ./wall_data:/data/wall_data
+      # Optional: mount your media NAS folder read-only for direct file encoding via MEDIA_PATH_MAP
+      # - /mnt/nas/movies:/media/movies:ro
+    command: ["python", "encoder_daemon.py", "--daemon", "--workers", "4", "--interval", "900"]

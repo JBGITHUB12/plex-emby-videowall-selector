@@ -1,0 +1,41 @@
+{
+  "wall_dir": "./wall_data",
+  "host": "0.0.0.0",
+  "port": 18500,
+  "kiosk_name": "Hallway Cinema Wall",
+  "audio_sink_match": "",
+  "portrait_cols": 5,
+  "portrait_rows": 16,
+  "landscape_cols": 8,
+  "landscape_rows": 9,
+  "clip_duration_sec": 40,
+  "clip_seek_ratio": 0.35,
+  "auto_glide_idle_sec": 75,
+  "servers": [
+    {
+      "id": "plex_main",
+      "provider": "plex",
+      "name": "Home Plex",
+      "url": "http://192.168.1.50:32400",
+      "token": "YOUR_PLEX_TOKEN_HERE",
+      "section_id": "",
+      "library_name": "Movies",
+      "path_map": {}
+    }
+  ],
+  "ha_url": "",
+  "ha_token": "",
+  "cast_targets": [
+    {
+      "id": "living_room_tv",
+      "name": "Living Room TV",
+      "subtitle": "Android TV / Google Cast",
+      "icon": "tv",
+      "cast_entity": "media_player.living_room_tv",
+      "power_entity": "media_player.living_room_tv",
+      "player_entities": [
+        "media_player.plex_living_room_tv"
+      ]
+    }
+  ]
+}

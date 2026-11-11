@@ -1,0 +1,2 @@
+# Zero external Python packages required!
+# Uses only the Python 3.10+ standard library + system FFmpeg binary in PATH.

@@ -1,0 +1,1862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Local Media VideoWall Selector — Plex, Emby &amp; Jellyfin</title>
+<style>
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    background: #000000;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  /* Dedicated single source-of-truth scroll container */
+  #viewport {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #000000;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    touch-action: pan-y;
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #viewport::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  #wall {
+    position: relative;
+    width: 100%;
+    min-height: 100vh;
+    background: #000000;
+  }
+
+  .tile {
+    position: absolute;
+    overflow: hidden;
+    background: #000000;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    contain: strict;
+  }
+
+  .tile video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
+    background: #000000;
+  }
+
+  /* Optional zero-border info HUD toggled ONLY via [I] key — hidden by default */
+  #hud {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.80);
+    color: #f8fafc;
+    font: 600 13px/1.35 system-ui, -apple-system, sans-serif;
+    padding: 6px 14px;
+    border-radius: 999px;
+    pointer-events: none;
+    z-index: 50;
+    display: none;
+    white-space: nowrap;
+  }
+
+  /* Optional Quick Filter Pill toggled ONLY via [/] or [F] key — hidden by default */
+  #filterBar {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 90;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    padding: 8px 16px;
+    border-radius: 999px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  }
+
+  #filterBar.open {
+    display: flex;
+  }
+
+  #filterInput {
+    background: transparent;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 600;
+    width: 240px;
+  }
+
+  #filterInput::placeholder {
+    color: #94a3b8;
+  }
+
+  #filterCount {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fbbf24;
+    white-space: nowrap;
+  }
+
+  #filterClearBtn {
+    background: rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  /* First-run onboarding overlay (shown ONLY when 0 clips are encoded yet) */
+  #onboardingOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background: radial-gradient(circle at center, #0f172a 0%, #020617 100%);
+    color: #f8fafc;
+  }
+
+  #onboardingOverlay.open {
+    display: flex;
+  }
+
+  .onboarding-box {
+    max-width: 620px;
+    width: 100%;
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 24px;
+    padding: 32px;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.75);
+  }
+
+  .onboarding-title {
+    font-size: 24px;
+    font-weight: 800;
+    margin-bottom: 10px;
+  }
+
+  .onboarding-sub {
+    font-size: 15px;
+    line-height: 1.55;
+    color: #cbd5e1;
+    margin-bottom: 18px;
+  }
+
+  .onboarding-code {
+    background: rgba(2, 6, 23, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 13.5px;
+    color: #38bdf8;
+    margin-bottom: 16px;
+    overflow-x: auto;
+  }
+
+  #onboardingStatus {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fbbf24;
+  }
+
+  /* ==============================================================
+     DOUBLE-TAP MOVIE LAUNCH & LAN PLAYER SELECTOR MODAL
+     ============================================================== */
+  #launchBackdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(3, 6, 14, 0.78);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  #launchBackdrop.open {
+    display: flex;
+  }
+
+  .launch-card {
+    position: relative;
+    width: 100%;
+    max-width: 880px;
+    max-height: 90vh;
+    background: rgba(15, 20, 32, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 26px;
+    overflow: hidden;
+    box-shadow: 0 32px 90px rgba(0, 0, 0, 0.85);
+    display: flex;
+    flex-direction: column;
+    color: #f8fafc;
+  }
+
+  .launch-hero {
+    position: relative;
+    display: flex;
+    gap: 24px;
+    padding: 28px;
+    background: linear-gradient(180deg, rgba(15, 20, 32, 0.45) 0%, rgba(15, 20, 32, 0.98) 100%);
+    overflow: hidden;
+  }
+
+  .launch-hero-bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    opacity: 0.28;
+    filter: blur(14px) saturate(1.2);
+    transform: scale(1.08);
+    z-index: 0;
+  }
+
+  .launch-poster {
+    position: relative;
+    z-index: 1;
+    width: 144px;
+    height: 216px;
+    border-radius: 14px;
+    object-fit: cover;
+    background: #1e293b;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65);
+    flex-shrink: 0;
+  }
+
+  .launch-meta {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .launch-title {
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1.18;
+    letter-spacing: -0.02em;
+    color: #ffffff;
+    margin-bottom: 10px;
+  }
+
+  .launch-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .badge-pill {
+    background: rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+    font-size: 13.5px;
+    font-weight: 700;
+    padding: 5px 11px;
+    border-radius: 8px;
+  }
+
+  .badge-pill.gold {
+    background: rgba(245, 158, 11, 0.22);
+    color: #fbbf24;
+  }
+
+  .badge-pill.provider {
+    background: rgba(56, 189, 248, 0.20);
+    color: #38bdf8;
+    text-transform: uppercase;
+  }
+
+  .launch-summary {
+    font-size: 15px;
+    line-height: 1.48;
+    color: #cbd5e1;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .launch-body {
+    padding: 8px 28px 26px 28px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .play-here-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .btn-play-here {
+    flex: 1;
+    min-height: 68px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    cursor: pointer;
+    box-shadow: 0 10px 28px rgba(234, 88, 12, 0.38);
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+
+  .btn-play-here:active {
+    transform: scale(0.98);
+  }
+
+  .btn-resume-here {
+    min-height: 68px;
+    padding: 0 22px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.11);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #f8fafc;
+    font-size: 16px;
+    font-weight: 700;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .btn-resume-here:active {
+    transform: scale(0.98);
+  }
+
+  .section-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 2px;
+  }
+
+  .section-heading {
+    font-size: 13.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #94a3b8;
+  }
+
+  .btn-refresh-devices {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .btn-refresh-devices:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .devices-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+
+  .device-btn {
+    min-height: 74px;
+    padding: 13px 16px;
+    border-radius: 15px;
+    background: rgba(30, 41, 59, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    color: #f8fafc;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.12s ease;
+  }
+
+  .device-btn:hover {
+    background: rgba(51, 65, 85, 0.9);
+  }
+
+  .device-btn:active {
+    transform: scale(0.98);
+  }
+
+  .device-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .device-name {
+    font-size: 16.5px;
+    font-weight: 700;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .device-badge {
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
+  }
+
+  .device-badge.ready,
+  .device-badge.plex_ready {
+    background: rgba(16, 185, 129, 0.24);
+    color: #34d399;
+  }
+
+  .device-badge.online {
+    background: rgba(56, 189, 248, 0.22);
+    color: #38bdf8;
+  }
+
+  .device-sub {
+    font-size: 12.5px;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #castFeedback {
+    display: none;
+    padding: 13px 16px;
+    border-radius: 14px;
+    font-size: 15.5px;
+    font-weight: 700;
+    text-align: center;
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+  }
+
+  #castFeedback.error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.35);
+  }
+
+  .btn-close-modal {
+    min-height: 56px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  /* ==============================================================
+     FULL-SCREEN LOCAL CINEMA PLAYER ("PLAY HERE")
+     ============================================================== */
+  #cinemaOverlay {
+    position: fixed;
+    inset: 0;
+    background: #000000;
+    z-index: 300;
+    display: none;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  #cinemaOverlay.open {
+    display: flex;
+  }
+
+  #cinemaVideo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000000;
+  }
+
+  #cinemaVideo.fill-screen {
+    object-fit: cover;
+  }
+
+  .cinema-bar-top,
+  .cinema-bar-bottom {
+    position: relative;
+    z-index: 2;
+    padding: 24px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: opacity 0.25s ease;
+  }
+
+  .cinema-bar-top {
+    background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
+    justify-content: space-between;
+  }
+
+  .cinema-bar-bottom {
+    background: linear-gradient(0deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0) 100%);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  #cinemaOverlay.controls-hidden .cinema-bar-top,
+  #cinemaOverlay.controls-hidden .cinema-bar-bottom {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .cinema-btn {
+    min-height: 52px;
+    padding: 0 20px;
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(12px);
+    color: #ffffff;
+    font-size: 16.5px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .cinema-btn:active {
+    transform: scale(0.96);
+  }
+
+  .cinema-now-title {
+    font-size: 20px;
+    font-weight: 800;
+    color: #ffffff;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    flex: 1;
+    text-align: center;
+  }
+
+  .cinema-scrubber-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: #e2e8f0;
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #cinemaSeek {
+    flex: 1;
+    height: 10px;
+    accent-color: #f59e0b;
+    cursor: pointer;
+  }
+
+  .cinema-transport-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  @media (max-width: 640px) {
+    .launch-hero {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 20px;
+    }
+    .launch-badges {
+      justify-content: center;
+    }
+    .play-here-row {
+      flex-direction: column;
+    }
+  }
+</style>
+</head>
+<body>
+<div id="viewport" tabindex="0">
+  <div id="wall"></div>
+</div>
+<div id="hud"></div>
+
+<!-- Optional Quick Filter Bar (Press [/] or [F] to summon, [Esc] to clear) -->
+<div id="filterBar">
+  <input id="filterInput" type="text" placeholder="Filter movies or collections..." autocomplete="off" />
+  <span id="filterCount"></span>
+  <button id="filterClearBtn" type="button">Clear</button>
+</div>
+
+<!-- First-Run Onboarding State (Visible ONLY when 0 clips are encoded yet) -->
+<div id="onboardingOverlay">
+  <div class="onboarding-box">
+    <div class="onboarding-title">🎬 Local Media VideoWall Selector</div>
+    <div class="onboarding-sub">
+      Waiting for pre-encoded <code>120p</code> scene clips in <code>wall_data/clips/</code>.
+      Start the clip encoder against your Plex, Emby, or Jellyfin server — this screen will automatically
+      launch into the borderless VideoWall as soon as the first clip finishes!
+    </div>
+    <div class="onboarding-code">python encoder_daemon.py --workers 6</div>
+    <div id="onboardingStatus">Checking library &amp; encoder status...</div>
+  </div>
+</div>
+
+<!-- Double-Tap Launch & Local Network Cast Modal -->
+<div id="launchBackdrop">
+  <div class="launch-card" id="launchCard">
+    <div class="launch-hero">
+      <div class="launch-hero-bg" id="modalArtBg"></div>
+      <img class="launch-poster" id="modalPoster" alt="" />
+      <div class="launch-meta">
+        <div class="launch-title" id="modalTitle">Loading...</div>
+        <div class="launch-badges" id="modalBadges"></div>
+        <div class="launch-summary" id="modalSummary"></div>
+      </div>
+    </div>
+    <div class="launch-body">
+      <div class="play-here-row">
+        <button class="btn-play-here" id="btnPlayHere">▶ Play Here</button>
+        <button class="btn-resume-here" id="btnResumeHere">⏯ Resume</button>
+      </div>
+
+      <div id="castFeedback"></div>
+
+      <div class="section-header-row">
+        <div class="section-heading">Send to a Player on Your Local Network</div>
+        <button class="btn-refresh-devices" id="btnRefreshDevices" type="button">↻ Refresh Players</button>
+      </div>
+      <div class="devices-grid" id="devicesGrid"></div>
+
+      <button class="btn-close-modal" id="btnCloseModal">✕ Back to Video Wall</button>
+    </div>
+  </div>
+</div>
+
+<!-- Full-Screen Local Cinema Overlay ("Play Here") -->
+<div id="cinemaOverlay">
+  <video id="cinemaVideo" playsinline></video>
+  <div class="cinema-bar-top">
+    <button class="cinema-btn" id="btnCinemaBack">← Back to Wall</button>
+    <div class="cinema-now-title" id="cinemaTitle"></div>
+    <button class="cinema-btn" id="btnCinemaAspect">Fit 16:9</button>
+  </div>
+  <div class="cinema-bar-bottom">
+    <div class="cinema-scrubber-row">
+      <span id="cinemaCurTime">0:00</span>
+      <input type="range" id="cinemaSeek" min="0" max="1000" value="0" />
+      <span id="cinemaDurTime">0:00</span>
+    </div>
+    <div class="cinema-transport-row">
+      <button class="cinema-btn" id="btnCinemaBack15">⟲ 15s</button>
+      <button class="cinema-btn" id="btnCinemaPlayPause">⏸ Pause</button>
+      <button class="cinema-btn" id="btnCinemaFwd30">30s ⟳</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlCols = parseInt(urlParams.get('cols') || '0', 10);
+  const urlRows = parseInt(urlParams.get('rows') || '0', 10);
+
+  const cfgGrid = {
+    portraitCols: 5,
+    portraitRows: 16,
+    landscapeCols: 8,
+    landscapeRows: 9,
+    audioSinkMatch: '',
+    kioskName: 'This Screen',
+  };
+
+  let cols = 5;
+  let visibleRows = 16;
+
+  const BUFFER_ABOVE = 3;
+  const BUFFER_BELOW = 4;
+  const FAST_FLICK_PX_PER_SEC = 3800;
+  const FLICK_SETTLE_MS = 55;
+  let idleGlideMs = urlParams.get('glide') === '0' ? 0 : 75000;
+  const GLIDE_PX_PER_SEC = 18;
+  const DOUBLE_TAP_MS = 430;
+
+  const viewportEl = document.getElementById('viewport');
+  const wallEl = document.getElementById('wall');
+  const hudEl = document.getElementById('hud');
+  const onboardingOverlay = document.getElementById('onboardingOverlay');
+  const onboardingStatus = document.getElementById('onboardingStatus');
+
+  // Filter Bar elements
+  const filterBar = document.getElementById('filterBar');
+  const filterInput = document.getElementById('filterInput');
+  const filterCount = document.getElementById('filterCount');
+  const filterClearBtn = document.getElementById('filterClearBtn');
+
+  // Launch Modal elements
+  const launchBackdrop = document.getElementById('launchBackdrop');
+  const launchCard = document.getElementById('launchCard');
+  const modalArtBg = document.getElementById('modalArtBg');
+  const modalPoster = document.getElementById('modalPoster');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalBadges = document.getElementById('modalBadges');
+  const modalSummary = document.getElementById('modalSummary');
+  const btnPlayHere = document.getElementById('btnPlayHere');
+  const btnResumeHere = document.getElementById('btnResumeHere');
+  const btnRefreshDevices = document.getElementById('btnRefreshDevices');
+  const devicesGrid = document.getElementById('devicesGrid');
+  const castFeedback = document.getElementById('castFeedback');
+  const btnCloseModal = document.getElementById('btnCloseModal');
+
+  // Cinema Player elements
+  const cinemaOverlay = document.getElementById('cinemaOverlay');
+  const cinemaVideo = document.getElementById('cinemaVideo');
+  const cinemaTitle = document.getElementById('cinemaTitle');
+  const btnCinemaBack = document.getElementById('btnCinemaBack');
+  const btnCinemaAspect = document.getElementById('btnCinemaAspect');
+  const btnCinemaPlayPause = document.getElementById('btnCinemaPlayPause');
+  const btnCinemaBack15 = document.getElementById('btnCinemaBack15');
+  const btnCinemaFwd30 = document.getElementById('btnCinemaFwd30');
+  const cinemaSeek = document.getElementById('cinemaSeek');
+  const cinemaCurTime = document.getElementById('cinemaCurTime');
+  const cinemaDurTime = document.getElementById('cinemaDurTime');
+
+  let allMovies = [];
+  let movies = [];
+  let activeFilterQuery = '';
+  let totalMoviesCount = 0;
+  let totalSlots = 0;
+  let numRows = 0;
+
+  let tileW = 216;
+  let tileH = 120;
+
+  const mounted = new Map();
+  let isInitialBoot = true;
+  let lastMinSlot = -1;
+  let lastMaxSlot = -1;
+
+  let activeAudioSlot = -1;
+  let globalMuted = false;
+  let pointerInside = false;
+  let lastClientX = -1;
+  let lastClientY = -1;
+  let lastInteractionAt = performance.now();
+  let autoGlideEnabled = urlParams.get('glide') !== '0';
+  let showHud = urlParams.get('hud') === '1';
+  let preferredSinkId = null;
+
+  let modalOpen = false;
+  let cinemaOpen = false;
+  let filterOpen = false;
+  let selectedMovieDetails = null;
+  let selectedMovieBasic = null;
+  let controlsHideTimer = null;
+
+  function resolveGridDimensions() {
+    const isPortrait = window.innerHeight > window.innerWidth;
+    cols = urlCols > 0 ? urlCols : (isPortrait ? cfgGrid.portraitCols : cfgGrid.landscapeCols);
+    visibleRows = urlRows > 0 ? urlRows : (isPortrait ? cfgGrid.portraitRows : cfgGrid.landscapeRows);
+  }
+
+  function getScrollTop() {
+    return viewportEl.scrollTop || 0;
+  }
+
+  function formatSeconds(sec) {
+    if (!sec || !isFinite(sec) || sec < 0) return '0:00';
+    const s = Math.floor(sec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const rem = s % 60;
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+    }
+    return `${m}:${String(rem).padStart(2, '0')}`;
+  }
+
+  async function detectPreferredAudioSink() {
+    try {
+      if (!cfgGrid.audioSinkMatch) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      const needle = cfgGrid.audioSinkMatch.toUpperCase();
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const out = devs.find(d =>
+        d.kind === 'audiooutput' &&
+        d.label &&
+        d.label.toUpperCase().includes(needle)
+      );
+      if (out && out.deviceId) {
+        preferredSinkId = out.deviceId;
+      }
+    } catch (_) {}
+  }
+
+  function applySinkIfNeeded(video) {
+    if (preferredSinkId && typeof video.setSinkId === 'function' && video._appliedSink !== preferredSinkId) {
+      video._appliedSink = preferredSinkId;
+      video.setSinkId(preferredSinkId).catch(() => {});
+    }
+  }
+
+  function movieAtSlot(slotIdx) {
+    if (movies.length === 0) return null;
+    return movies[slotIdx % movies.length];
+  }
+
+  function recalcGeometry() {
+    resolveGridDimensions();
+    tileW = window.innerWidth / cols;
+    tileH = window.innerHeight / visibleRows;
+    lastMinSlot = -1;
+    lastMaxSlot = -1;
+
+    if (movies.length === 0) {
+      totalSlots = 0;
+      numRows = 0;
+      wallEl.style.height = '100vh';
+      return;
+    }
+
+    const minSlots = cols * visibleRows;
+    const rawCount = Math.max(movies.length, minSlots);
+    numRows = Math.ceil(rawCount / cols);
+    totalSlots = numRows * cols;
+    wallEl.style.height = `${Math.round(numRows * tileH)}px`;
+
+    for (const [slotIdx, entry] of mounted.entries()) {
+      positionTileEl(entry.el, slotIdx);
+    }
+  }
+
+  function positionTileEl(el, slotIdx) {
+    const row = Math.floor(slotIdx / cols);
+    const col = slotIdx % cols;
+    const x0 = Math.round(col * tileW);
+    const x1 = Math.round((col + 1) * tileW);
+    const y0 = Math.round(row * tileH);
+    const y1 = Math.round((row + 1) * tileH);
+    el.style.left = `${x0}px`;
+    el.style.top = `${y0}px`;
+    el.style.width = `${x1 - x0}px`;
+    el.style.height = `${y1 - y0}px`;
+  }
+
+  function createTileNode() {
+    const el = document.createElement('div');
+    el.className = 'tile';
+    const video = document.createElement('video');
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.disablePictureInPicture = true;
+    el.appendChild(video);
+    return { el, video };
+  }
+
+  function releaseSlot(slotIdx) {
+    const entry = mounted.get(slotIdx);
+    if (!entry) return;
+    if (slotIdx === activeAudioSlot) {
+      activeAudioSlot = -1;
+    }
+    entry.video.onloadedmetadata = null;
+    entry.video.muted = true;
+    try {
+      entry.video.pause();
+      entry.video.removeAttribute('src');
+      entry.video.load();
+    } catch (_) {}
+    entry.el.remove();
+    mounted.delete(slotIdx);
+  }
+
+  function clearAllMounted() {
+    for (const slotIdx of Array.from(mounted.keys())) {
+      releaseSlot(slotIdx);
+    }
+    lastMinSlot = -1;
+    lastMaxSlot = -1;
+  }
+
+  function mountSlot(slotIdx, staggerBoot) {
+    if (mounted.has(slotIdx)) return;
+    const movie = movieAtSlot(slotIdx);
+    if (!movie) return;
+
+    const { el, video } = createTileNode();
+    positionTileEl(el, slotIdx);
+
+    const srcUrl = `/clips/${encodeURIComponent(movie.k)}.mp4`;
+    video.muted = true;
+
+    if (staggerBoot) {
+      const startOffset = (slotIdx * 5.71) % 28;
+      video.onloadedmetadata = () => {
+        video.onloadedmetadata = null;
+        if (video.duration && video.duration > 8) {
+          try {
+            video.currentTime = Math.min(startOffset, video.duration - 2);
+          } catch (_) {}
+        }
+      };
+    }
+
+    video.src = srcUrl;
+    wallEl.appendChild(el);
+    if (!cinemaOpen) {
+      video.play().catch(() => {});
+    }
+
+    mounted.set(slotIdx, { el, video, movie });
+  }
+
+  function syncViewport(force = false) {
+    if (totalSlots === 0 || cinemaOpen) return;
+
+    const scrollTop = getScrollTop();
+    const viewHeight = viewportEl.clientHeight || window.innerHeight;
+    const viewBottom = scrollTop + viewHeight;
+
+    const firstRow = Math.max(0, Math.floor(scrollTop / tileH) - BUFFER_ABOVE);
+    const lastRow = Math.min(numRows - 1, Math.ceil(viewBottom / tileH) - 1 + BUFFER_BELOW);
+
+    const minSlot = firstRow * cols;
+    const maxSlot = (lastRow + 1) * cols - 1;
+
+    if (force || minSlot !== lastMinSlot || maxSlot !== lastMaxSlot) {
+      lastMinSlot = minSlot;
+      lastMaxSlot = maxSlot;
+
+      for (const slotIdx of Array.from(mounted.keys())) {
+        if (slotIdx < minSlot || slotIdx > maxSlot) {
+          releaseSlot(slotIdx);
+        }
+      }
+
+      const staggerBoot = isInitialBoot;
+      for (let s = minSlot; s <= maxSlot; s++) {
+        if (s >= 0 && s < totalSlots) {
+          mountSlot(s, staggerBoot);
+        }
+      }
+      isInitialBoot = false;
+    }
+
+    if (!modalOpen && pointerInside && !globalMuted && lastClientX >= 0 && lastClientY >= 0) {
+      updateHoveredAudio(lastClientX, lastClientY);
+    }
+  }
+
+  function muteAllActive() {
+    if (activeAudioSlot !== -1) {
+      const prev = mounted.get(activeAudioSlot);
+      if (prev) {
+        prev.video.muted = true;
+      }
+      activeAudioSlot = -1;
+    }
+    updateHud();
+  }
+
+  function slotFromCoords(clientX, clientY) {
+    const scrollTop = getScrollTop();
+    const col = Math.min(cols - 1, Math.max(0, Math.floor(clientX / tileW)));
+    const row = Math.min(numRows - 1, Math.max(0, Math.floor((scrollTop + clientY) / tileH)));
+    return row * cols + col;
+  }
+
+  function updateHoveredAudio(clientX, clientY) {
+    if (totalSlots === 0 || globalMuted || modalOpen || cinemaOpen) {
+      muteAllActive();
+      return;
+    }
+    if (clientX < 0 || clientY < 0 || clientX >= window.innerWidth || clientY >= window.innerHeight) {
+      muteAllActive();
+      return;
+    }
+
+    const slotIdx = slotFromCoords(clientX, clientY);
+
+    if (slotIdx === activeAudioSlot) {
+      const cur = mounted.get(slotIdx);
+      if (cur && cur.video.muted) {
+        applySinkIfNeeded(cur.video);
+        cur.video.volume = 1.0;
+        cur.video.muted = false;
+        if (cur.video.paused) cur.video.play().catch(() => {});
+      }
+      return;
+    }
+
+    if (activeAudioSlot !== -1) {
+      const prev = mounted.get(activeAudioSlot);
+      if (prev) {
+        prev.video.muted = true;
+      }
+    }
+
+    activeAudioSlot = slotIdx;
+    const entry = mounted.get(slotIdx);
+    if (entry) {
+      applySinkIfNeeded(entry.video);
+      entry.video.volume = 1.0;
+      entry.video.muted = false;
+      if (entry.video.paused) {
+        entry.video.play().catch(() => {});
+      }
+    }
+    updateHud();
+  }
+
+  function updateHud() {
+    if (!showHud || modalOpen || cinemaOpen || totalSlots === 0) {
+      hudEl.style.display = 'none';
+      return;
+    }
+    hudEl.style.display = 'block';
+    const curRow = Math.floor(getScrollTop() / tileH) + 1;
+    const entry = activeAudioSlot >= 0 ? mounted.get(activeAudioSlot) : null;
+    if (entry && entry.movie) {
+      const yr = entry.movie.y ? ` (${entry.movie.y})` : '';
+      const col = entry.movie.c ? ` • ${entry.movie.c}` : '';
+      const audioBadge = globalMuted ? 'MUTED' : 'AUDIO ON';
+      hudEl.textContent = `${entry.movie.t}${yr}${col} • ${audioBadge} • Row ${curRow}/${numRows} (${movies.length} Films)`;
+    } else {
+      hudEl.textContent = `Row ${curRow}/${numRows} • ${movies.length}/${totalMoviesCount} Films`;
+    }
+  }
+
+  // ==============================================================
+  // QUICK FILTER BAR ([/] or [F] KEY)
+  // ==============================================================
+  function applyMovieFilter(q) {
+    activeFilterQuery = (q || '').trim().toLowerCase();
+    if (!activeFilterQuery) {
+      movies = allMovies;
+      filterCount.textContent = '';
+    } else {
+      movies = allMovies.filter(m =>
+        (m.t && m.t.toLowerCase().includes(activeFilterQuery)) ||
+        (m.c && m.c.toLowerCase().includes(activeFilterQuery)) ||
+        (m.y && String(m.y).includes(activeFilterQuery))
+      );
+      filterCount.textContent = `${movies.length} match${movies.length === 1 ? '' : 'es'}`;
+    }
+    viewportEl.scrollTop = 0;
+    clearAllMounted();
+    recalcGeometry();
+    syncViewport(true);
+    updateHud();
+  }
+
+  function openFilterBar() {
+    filterOpen = true;
+    filterBar.classList.add('open');
+    filterInput.focus();
+    filterInput.select();
+  }
+
+  function closeFilterBar(resetQuery = false) {
+    filterOpen = false;
+    filterBar.classList.remove('open');
+    if (resetQuery && activeFilterQuery) {
+      filterInput.value = '';
+      applyMovieFilter('');
+    }
+    viewportEl.focus();
+  }
+
+  filterInput.addEventListener('input', () => {
+    applyMovieFilter(filterInput.value);
+  });
+
+  filterInput.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      closeFilterBar(true);
+    } else if (e.key === 'Enter') {
+      closeFilterBar(false);
+    }
+  });
+
+  filterClearBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    filterInput.value = '';
+    applyMovieFilter('');
+    closeFilterBar(false);
+  });
+
+  // ==============================================================
+  // DOUBLE-TAP LAUNCH & LAN PLAYER CAST MODAL
+  // ==============================================================
+  async function refreshDevicesOnly() {
+    devicesGrid.innerHTML = '<div style="color:#94a3b8;font-size:14.5px;padding:6px 0;">Scanning local network players...</div>';
+    try {
+      const devResp = await fetch('/api/devices', { cache: 'no-store' });
+      if (devResp.ok) {
+        const devData = await devResp.json();
+        renderDevicesList(devData.devices || []);
+      }
+    } catch (_) {
+      devicesGrid.innerHTML = '<div style="color:#fca5a5;">Could not query local network players</div>';
+    }
+  }
+
+  async function openLaunchModalForSlot(slotIdx) {
+    const basic = movieAtSlot(slotIdx);
+    if (!basic) return;
+
+    modalOpen = true;
+    selectedMovieBasic = basic;
+    selectedMovieDetails = null;
+    muteAllActive();
+
+    castFeedback.style.display = 'none';
+    castFeedback.className = '';
+    btnResumeHere.style.display = 'none';
+
+    const yrTxt = basic.y ? ` (${basic.y})` : '';
+    modalTitle.textContent = `${basic.t}${yrTxt}`;
+    modalPoster.src = `/api/poster/${encodeURIComponent(basic.k)}`;
+    modalArtBg.style.backgroundImage = `url('/api/art/${encodeURIComponent(basic.k)}')`;
+    modalBadges.innerHTML = '<span class="badge-pill">Loading media info...</span>';
+    modalSummary.textContent = '';
+    devicesGrid.innerHTML = '<div style="color:#94a3b8;font-size:14.5px;padding:6px 0;">Scanning local network players...</div>';
+
+    launchBackdrop.classList.add('open');
+
+    try {
+      const [movieResp, devResp] = await Promise.all([
+        fetch(`/api/movie/${encodeURIComponent(basic.k)}`, { cache: 'no-store' }),
+        fetch('/api/devices', { cache: 'no-store' }),
+      ]);
+
+      if (movieResp.ok) {
+        const d = await movieResp.json();
+        selectedMovieDetails = d;
+        modalTitle.textContent = d.year ? `${d.title} (${d.year})` : d.title;
+        modalSummary.textContent = d.summary || d.tagline || '';
+
+        const pills = [];
+        if (d.provider) pills.push(`<span class="badge-pill provider">${escapeHtml(d.provider)}</span>`);
+        if (basic.c) pills.push(`<span class="badge-pill gold">🎬 ${escapeHtml(basic.c)}</span>`);
+        if (d.resolution) pills.push(`<span class="badge-pill gold">${escapeHtml(d.resolution)}</span>`);
+        if (d.duration_sec > 0) {
+          const mins = Math.round(d.duration_sec / 60);
+          const h = Math.floor(mins / 60);
+          const m = mins % 60;
+          pills.push(`<span class="badge-pill">${h > 0 ? `${h}h ${m}m` : `${m}m`}</span>`);
+        }
+        if (d.contentRating) pills.push(`<span class="badge-pill">${escapeHtml(d.contentRating)}</span>`);
+        if (d.rating) pills.push(`<span class="badge-pill">★ ${Number(d.rating).toFixed(1)}</span>`);
+        for (const g of (d.genres || [])) {
+          pills.push(`<span class="badge-pill">${escapeHtml(g)}</span>`);
+        }
+        modalBadges.innerHTML = pills.join('');
+
+        if (d.view_offset_sec && d.view_offset_sec > 30) {
+          btnResumeHere.textContent = `⏯ Resume (${formatSeconds(d.view_offset_sec)})`;
+          btnResumeHere.style.display = 'inline-flex';
+        }
+      }
+
+      if (devResp.ok) {
+        const devData = await devResp.json();
+        renderDevicesList(devData.devices || []);
+      }
+    } catch (_) {
+      devicesGrid.innerHTML = '<div style="color:#fca5a5;">Could not reach media server</div>';
+    }
+  }
+
+  function renderDevicesList(devices) {
+    devicesGrid.innerHTML = '';
+    if (!devices.length) {
+      devicesGrid.innerHTML = '<div style="color:#94a3b8;font-size:14px;grid-column:1/-1;">No active Plex, Emby, Jellyfin, or Cast players detected yet. Open the Plex / Emby / Jellyfin app on any TV or device on your network and click Refresh Players.</div>';
+      return;
+    }
+    for (const dev of devices) {
+      const btn = document.createElement('button');
+      btn.className = 'device-btn';
+      btn.innerHTML = `
+        <div class="device-top">
+          <span class="device-name">${escapeHtml(dev.name)}</span>
+          <span class="device-badge ${escapeHtml(dev.state || '')}">${escapeHtml(dev.badge || '')}</span>
+        </div>
+        <div class="device-sub">${escapeHtml(dev.subtitle || '')}</div>
+      `;
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        castToDevice(dev);
+      });
+      devicesGrid.appendChild(btn);
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  async function castToDevice(dev) {
+    if (!selectedMovieBasic) return;
+    castFeedback.className = '';
+    castFeedback.style.display = 'block';
+    castFeedback.textContent = `Sending "${selectedMovieBasic.t}" to ${dev.name}...`;
+
+    try {
+      const offsetSec = (selectedMovieDetails && selectedMovieDetails.view_offset_sec > 30)
+        ? selectedMovieDetails.view_offset_sec
+        : 0;
+      const resp = await fetch('/api/cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: selectedMovieBasic.k,
+          target_id: dev.id,
+          offset_sec: offsetSec,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        castFeedback.className = '';
+        castFeedback.textContent = `✓ ${data.message || `Now playing on ${dev.name}!`}`;
+        setTimeout(() => {
+          if (modalOpen) closeLaunchModal();
+        }, 1700);
+      } else {
+        castFeedback.className = 'error';
+        castFeedback.textContent = data.message || `Could not start playback on ${dev.name}`;
+      }
+    } catch (_) {
+      castFeedback.className = 'error';
+      castFeedback.textContent = `Network error sending to ${dev.name}`;
+    }
+  }
+
+  function closeLaunchModal() {
+    modalOpen = false;
+    launchBackdrop.classList.remove('open');
+    lastInteractionAt = performance.now();
+  }
+
+  btnRefreshDevices.addEventListener('click', (e) => {
+    e.stopPropagation();
+    refreshDevicesOnly();
+  });
+
+  launchBackdrop.addEventListener('click', (e) => {
+    if (e.target === launchBackdrop) closeLaunchModal();
+  });
+  launchCard.addEventListener('click', (e) => e.stopPropagation());
+  btnCloseModal.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeLaunchModal();
+  });
+
+  // ==============================================================
+  // FULL-SCREEN LOCAL CINEMA PLAYER ("PLAY HERE")
+  // ==============================================================
+  let cinemaBaseOffset = 0;
+
+  async function startPlayHere(startOffsetSec = 0) {
+    if (!selectedMovieBasic) return;
+    let details = selectedMovieDetails;
+    if (!details) {
+      try {
+        const r = await fetch(`/api/movie/${encodeURIComponent(selectedMovieBasic.k)}`);
+        if (r.ok) details = await r.json();
+      } catch (_) {}
+    }
+    if (!details || !details.play_here_url) return;
+
+    closeLaunchModal();
+    cinemaOpen = true;
+    muteAllActive();
+
+    for (const entry of mounted.values()) {
+      entry.video.pause();
+    }
+
+    cinemaTitle.textContent = details.year ? `${details.title} (${details.year})` : details.title;
+    applySinkIfNeeded(cinemaVideo);
+    cinemaVideo.muted = false;
+    cinemaVideo.volume = 1.0;
+
+    if (details.play_here_mode === 'remux') {
+      cinemaBaseOffset = startOffsetSec;
+      cinemaVideo.src = `${details.play_here_url}?start=${Math.floor(startOffsetSec)}`;
+    } else {
+      cinemaBaseOffset = 0;
+      cinemaVideo.src = details.play_here_url;
+      if (startOffsetSec > 2) {
+        cinemaVideo.addEventListener('loadedmetadata', function seekOnce() {
+          cinemaVideo.removeEventListener('loadedmetadata', seekOnce);
+          try { cinemaVideo.currentTime = startOffsetSec; } catch (_) {}
+        });
+      }
+    }
+
+    cinemaOverlay.classList.add('open');
+    showCinemaControlsTemporarily();
+    cinemaVideo.play().catch(() => {});
+    btnCinemaPlayPause.textContent = '⏸ Pause';
+  }
+
+  function closeCinemaPlayer() {
+    cinemaOpen = false;
+    cinemaVideo.pause();
+    cinemaVideo.removeAttribute('src');
+    cinemaVideo.load();
+    cinemaOverlay.classList.remove('open');
+    if (controlsHideTimer) clearTimeout(controlsHideTimer);
+    lastInteractionAt = performance.now();
+
+    for (const entry of mounted.values()) {
+      entry.video.play().catch(() => {});
+    }
+    syncViewport();
+  }
+
+  function showCinemaControlsTemporarily() {
+    cinemaOverlay.classList.remove('controls-hidden');
+    if (controlsHideTimer) clearTimeout(controlsHideTimer);
+    controlsHideTimer = setTimeout(() => {
+      if (cinemaOpen && !cinemaVideo.paused) {
+        cinemaOverlay.classList.add('controls-hidden');
+      }
+    }, 3800);
+  }
+
+  btnPlayHere.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startPlayHere(0);
+  });
+
+  btnResumeHere.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const off = (selectedMovieDetails && selectedMovieDetails.view_offset_sec) || 0;
+    startPlayHere(off);
+  });
+
+  btnCinemaBack.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeCinemaPlayer();
+  });
+
+  btnCinemaAspect.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const filled = cinemaVideo.classList.toggle('fill-screen');
+    btnCinemaAspect.textContent = filled ? 'Fill Screen' : 'Fit 16:9';
+    showCinemaControlsTemporarily();
+  });
+
+  btnCinemaPlayPause.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (cinemaVideo.paused) {
+      cinemaVideo.play().catch(() => {});
+      btnCinemaPlayPause.textContent = '⏸ Pause';
+    } else {
+      cinemaVideo.pause();
+      btnCinemaPlayPause.textContent = '▶ Play';
+    }
+    showCinemaControlsTemporarily();
+  });
+
+  function seekCinemaRelative(deltaSec) {
+    if (!selectedMovieDetails) return;
+    if (selectedMovieDetails.play_here_mode === 'remux') {
+      const target = Math.max(0, cinemaBaseOffset + (cinemaVideo.currentTime || 0) + deltaSec);
+      cinemaBaseOffset = target;
+      cinemaVideo.src = `${selectedMovieDetails.play_here_url}?start=${Math.floor(target)}`;
+      cinemaVideo.play().catch(() => {});
+    } else {
+      cinemaVideo.currentTime = Math.max(0, (cinemaVideo.currentTime || 0) + deltaSec);
+    }
+    showCinemaControlsTemporarily();
+  }
+
+  btnCinemaBack15.addEventListener('click', (e) => {
+    e.stopPropagation();
+    seekCinemaRelative(-15);
+  });
+
+  btnCinemaFwd30.addEventListener('click', (e) => {
+    e.stopPropagation();
+    seekCinemaRelative(30);
+  });
+
+  cinemaVideo.addEventListener('timeupdate', () => {
+    if (!cinemaOpen) return;
+    const totalDur = (selectedMovieDetails && selectedMovieDetails.duration_sec) || cinemaVideo.duration || 0;
+    const cur = cinemaBaseOffset + (cinemaVideo.currentTime || 0);
+    cinemaCurTime.textContent = formatSeconds(cur);
+    cinemaDurTime.textContent = formatSeconds(totalDur);
+    if (totalDur > 0 && !cinemaSeek._dragging) {
+      cinemaSeek.value = String(Math.min(1000, Math.round((cur / totalDur) * 1000)));
+    }
+  });
+
+  cinemaSeek.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    cinemaSeek._dragging = true;
+    showCinemaControlsTemporarily();
+  });
+
+  cinemaSeek.addEventListener('change', (e) => {
+    e.stopPropagation();
+    const totalDur = (selectedMovieDetails && selectedMovieDetails.duration_sec) || cinemaVideo.duration || 0;
+    if (totalDur > 0) {
+      const targetSec = (Number(cinemaSeek.value) / 1000) * totalDur;
+      if (selectedMovieDetails && selectedMovieDetails.play_here_mode === 'remux') {
+        cinemaBaseOffset = targetSec;
+        cinemaVideo.src = `${selectedMovieDetails.play_here_url}?start=${Math.floor(targetSec)}`;
+        cinemaVideo.play().catch(() => {});
+      } else {
+        cinemaVideo.currentTime = targetSec;
+      }
+    }
+    cinemaSeek._dragging = false;
+    showCinemaControlsTemporarily();
+  });
+
+  cinemaOverlay.addEventListener('pointermove', () => {
+    if (cinemaOpen) showCinemaControlsTemporarily();
+  });
+
+  cinemaOverlay.addEventListener('click', (e) => {
+    if (e.target === cinemaVideo || e.target === cinemaOverlay) {
+      if (cinemaOverlay.classList.contains('controls-hidden')) {
+        showCinemaControlsTemporarily();
+      } else {
+        cinemaOverlay.classList.add('controls-hidden');
+      }
+    }
+  });
+
+  // ==============================================================
+  // POINTER, MOUSEOVER, SINGLE-TAP MUTE & DOUBLE-TAP POPUP
+  // ==============================================================
+  let lastTapTime = 0;
+  let lastTapSlot = -1;
+  let pendingMuteTimer = null;
+  let slotAlreadyPlayingAtDown = -1;
+  let downClientX = 0;
+  let downClientY = 0;
+  let downScrollTop = 0;
+  let pointerDragged = false;
+
+  function onPointerMove(e) {
+    if (modalOpen || cinemaOpen) return;
+    pointerInside = true;
+    lastClientX = e.clientX;
+    lastClientY = e.clientY;
+    lastInteractionAt = performance.now();
+    if (Math.hypot(e.clientX - downClientX, e.clientY - downClientY) > 18) {
+      pointerDragged = true;
+    }
+    if (globalMuted) {
+      const newSlot = slotFromCoords(e.clientX, e.clientY);
+      if (newSlot !== window._mutedOnSlot) {
+        globalMuted = false;
+      }
+    }
+    updateHoveredAudio(e.clientX, e.clientY);
+  }
+
+  viewportEl.addEventListener('pointerdown', (e) => {
+    if (modalOpen || cinemaOpen || totalSlots === 0) return;
+    pointerInside = true;
+    lastClientX = e.clientX;
+    lastClientY = e.clientY;
+    downClientX = e.clientX;
+    downClientY = e.clientY;
+    downScrollTop = getScrollTop();
+    pointerDragged = false;
+    lastInteractionAt = performance.now();
+
+    const tappedSlot = slotFromCoords(e.clientX, e.clientY);
+    const now = performance.now();
+
+    if (tappedSlot === lastTapSlot && (now - lastTapTime) <= DOUBLE_TAP_MS) {
+      if (pendingMuteTimer) {
+        clearTimeout(pendingMuteTimer);
+        pendingMuteTimer = null;
+      }
+      lastTapTime = 0;
+      lastTapSlot = -1;
+      slotAlreadyPlayingAtDown = -1;
+      openLaunchModalForSlot(tappedSlot);
+      return;
+    }
+
+    lastTapSlot = tappedSlot;
+    lastTapTime = now;
+    slotAlreadyPlayingAtDown = (!globalMuted && activeAudioSlot === tappedSlot) ? tappedSlot : -1;
+    globalMuted = false;
+    window._mutedOnSlot = -1;
+    updateHoveredAudio(e.clientX, e.clientY);
+  }, { passive: true });
+
+  viewportEl.addEventListener('dblclick', (e) => {
+    if (modalOpen || cinemaOpen || totalSlots === 0) return;
+    if (pendingMuteTimer) {
+      clearTimeout(pendingMuteTimer);
+      pendingMuteTimer = null;
+    }
+    const slotIdx = slotFromCoords(e.clientX, e.clientY);
+    openLaunchModalForSlot(slotIdx);
+  });
+
+  viewportEl.addEventListener('pointermove', onPointerMove, { passive: true });
+  viewportEl.addEventListener('mousemove', onPointerMove, { passive: true });
+  viewportEl.addEventListener('mouseover', onPointerMove, { passive: true });
+
+  document.addEventListener('mouseleave', () => {
+    if (modalOpen || cinemaOpen) return;
+    pointerInside = false;
+    muteAllActive();
+  });
+
+  viewportEl.addEventListener('click', (e) => {
+    if (modalOpen || cinemaOpen || totalSlots === 0) return;
+    lastInteractionAt = performance.now();
+    if (pointerDragged || Math.abs(getScrollTop() - downScrollTop) > 18) {
+      slotAlreadyPlayingAtDown = -1;
+      return;
+    }
+    const clickedSlot = slotFromCoords(e.clientX, e.clientY);
+    if (slotAlreadyPlayingAtDown === clickedSlot) {
+      if (pendingMuteTimer) clearTimeout(pendingMuteTimer);
+      pendingMuteTimer = setTimeout(() => {
+        pendingMuteTimer = null;
+        if (!modalOpen && !cinemaOpen) {
+          globalMuted = true;
+          window._mutedOnSlot = clickedSlot;
+          muteAllActive();
+        }
+      }, DOUBLE_TAP_MS + 10);
+      slotAlreadyPlayingAtDown = -1;
+    } else {
+      globalMuted = false;
+      pointerInside = true;
+      updateHoveredAudio(e.clientX, e.clientY);
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    lastInteractionAt = performance.now();
+    if (e.key === 'Escape') {
+      if (cinemaOpen) closeCinemaPlayer();
+      else if (modalOpen) closeLaunchModal();
+      else if (filterOpen || activeFilterQuery) closeFilterBar(true);
+      return;
+    }
+    if (modalOpen || cinemaOpen || filterOpen) return;
+
+    if (e.key === '/' || e.key === 'f' || e.key === 'F') {
+      e.preventDefault();
+      openFilterBar();
+    } else if (e.key === 'm' || e.key === 'M') {
+      globalMuted = !globalMuted;
+      window._mutedOnSlot = -1;
+      if (globalMuted) muteAllActive();
+      else if (pointerInside) updateHoveredAudio(lastClientX, lastClientY);
+    } else if (e.key === 'i' || e.key === 'I') {
+      showHud = !showHud;
+      updateHud();
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      autoGlideEnabled = !autoGlideEnabled;
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      viewportEl.scrollBy({ top: tileH * 3, behavior: 'smooth' });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      viewportEl.scrollBy({ top: -tileH * 3, behavior: 'smooth' });
+    } else if (e.key === 'PageDown') {
+      e.preventDefault();
+      viewportEl.scrollBy({ top: viewportEl.clientHeight, behavior: 'smooth' });
+    } else if (e.key === 'PageUp') {
+      e.preventDefault();
+      viewportEl.scrollBy({ top: -viewportEl.clientHeight, behavior: 'smooth' });
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      viewportEl.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      viewportEl.scrollTo({ top: wallEl.scrollHeight, behavior: 'smooth' });
+    }
+  });
+
+  // Velocity-aware virtualized scrolling
+  let scrollTicking = false;
+  let flickSettleTimer = null;
+  let prevScrollY = 0;
+  let prevScrollTs = performance.now();
+
+  viewportEl.addEventListener('scroll', () => {
+    const now = performance.now();
+    const curY = getScrollTop();
+    if (Math.abs(curY - downScrollTop) > 18) {
+      pointerDragged = true;
+      lastTapSlot = -1;
+      if (pendingMuteTimer) {
+        clearTimeout(pendingMuteTimer);
+        pendingMuteTimer = null;
+      }
+    }
+
+    const dtSec = Math.max(0.004, (now - prevScrollTs) / 1000);
+    const velocityPxPerSec = Math.abs(curY - prevScrollY) / dtSec;
+    prevScrollY = curY;
+    prevScrollTs = now;
+
+    if (flickSettleTimer) {
+      clearTimeout(flickSettleTimer);
+      flickSettleTimer = null;
+    }
+
+    if (velocityPxPerSec > FAST_FLICK_PX_PER_SEC) {
+      if (showHud) updateHud();
+      flickSettleTimer = setTimeout(() => {
+        flickSettleTimer = null;
+        syncViewport();
+        if (showHud) updateHud();
+      }, FLICK_SETTLE_MS);
+      return;
+    }
+
+    if (!scrollTicking) {
+      scrollTicking = true;
+      requestAnimationFrame(() => {
+        scrollTicking = false;
+        syncViewport();
+        if (showHud) updateHud();
+      });
+    }
+  }, { passive: true });
+
+  viewportEl.addEventListener('wheel', () => {
+    lastInteractionAt = performance.now();
+  }, { passive: true });
+
+  window.addEventListener('resize', () => {
+    const prevCols = cols;
+    const prevRows = visibleRows;
+    resolveGridDimensions();
+    if (cols !== prevCols || visibleRows !== prevRows) {
+      clearAllMounted();
+    }
+    recalcGeometry();
+    syncViewport(true);
+  });
+
+  let lastFrameTs = performance.now();
+  let subPixelScroll = 0;
+  function animationLoop(now) {
+    const dt = Math.min(0.1, (now - lastFrameTs) / 1000);
+    lastFrameTs = now;
+
+    if (
+      !modalOpen &&
+      !cinemaOpen &&
+      !filterOpen &&
+      autoGlideEnabled &&
+      idleGlideMs > 0 &&
+      numRows > visibleRows &&
+      (now - lastInteractionAt) > idleGlideMs
+    ) {
+      subPixelScroll += GLIDE_PX_PER_SEC * dt;
+      if (subPixelScroll >= 1) {
+        const step = Math.floor(subPixelScroll);
+        subPixelScroll -= step;
+        const maxScroll = Math.max(0, numRows * tileH - viewportEl.clientHeight);
+        const cur = getScrollTop();
+        if (cur + step >= maxScroll - 2) {
+          viewportEl.scrollTop = 0;
+        } else {
+          viewportEl.scrollTop = cur + step;
+        }
+      }
+    }
+    requestAnimationFrame(animationLoop);
+  }
+
+  let lastCatalogSig = '';
+
+  function computeCatalogSig(arr) {
+    if (!arr || arr.length === 0) return '';
+    const mid = arr[Math.floor(arr.length / 2)];
+    const first5 = arr.slice(0, 5).map(m => m.k).join(',');
+    const last3 = arr.slice(-3).map(m => m.k).join(',');
+    return `${arr.length}:${first5}:${mid ? mid.k : ''}:${last3}`;
+  }
+
+  async function loadServerConfig() {
+    try {
+      const resp = await fetch('/api/config', { cache: 'no-store' });
+      if (!resp.ok) return;
+      const c = await resp.json();
+      if (c.portrait_cols) cfgGrid.portraitCols = c.portrait_cols;
+      if (c.portrait_rows) cfgGrid.portraitRows = c.portrait_rows;
+      if (c.landscape_cols) cfgGrid.landscapeCols = c.landscape_cols;
+      if (c.landscape_rows) cfgGrid.landscapeRows = c.landscape_rows;
+      if (c.audio_sink_match) cfgGrid.audioSinkMatch = c.audio_sink_match;
+      if (c.kiosk_name) {
+        cfgGrid.kioskName = c.kiosk_name;
+        btnPlayHere.textContent = `▶ Play Here (${c.kiosk_name})`;
+      }
+      if (typeof c.auto_glide_idle_sec === 'number' && urlParams.get('glide') === null) {
+        idleGlideMs = c.auto_glide_idle_sec * 1000;
+        if (idleGlideMs <= 0) autoGlideEnabled = false;
+      }
+      recalcGeometry();
+      detectPreferredAudioSink();
+    } catch (_) {}
+  }
+
+  async function pollCatalog() {
+    if (cinemaOpen) return;
+    try {
+      const resp = await fetch('/api/movies', { cache: 'no-store' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const incoming = data.movies || [];
+      totalMoviesCount = data.total_movies || incoming.length;
+
+      if (incoming.length === 0) {
+        onboardingOverlay.classList.add('open');
+        try {
+          const stResp = await fetch('/api/status', { cache: 'no-store' });
+          if (stResp.ok) {
+            const st = await stResp.json();
+            if (st.encoding_active) {
+              onboardingStatus.textContent = `Encoding clips... ${st.ready_count} / ${st.total_movies} ready (${st.clips_per_sec || 0} clips/sec)`;
+            } else if ((st.configured_servers || []).length === 0) {
+              onboardingStatus.textContent = 'Configure MEDIA_PROVIDER, MEDIA_URL, and MEDIA_TOKEN in .env, then run encoder_daemon.py';
+            } else {
+              onboardingStatus.textContent = `Connected (${st.total_movies || 0} movies cataloged) — run encoder_daemon.py to generate clips`;
+            }
+          }
+        } catch (_) {}
+        return;
+      }
+
+      onboardingOverlay.classList.remove('open');
+
+      const nextSig = computeCatalogSig(incoming);
+      if (nextSig !== lastCatalogSig) {
+        lastCatalogSig = nextSig;
+        allMovies = incoming;
+        movies = activeFilterQuery
+          ? allMovies.filter(m =>
+              (m.t && m.t.toLowerCase().includes(activeFilterQuery)) ||
+              (m.c && m.c.toLowerCase().includes(activeFilterQuery)) ||
+              (m.y && String(m.y).includes(activeFilterQuery))
+            )
+          : allMovies;
+
+        recalcGeometry();
+
+        for (const [slotIdx, entry] of Array.from(mounted.entries())) {
+          const expected = movieAtSlot(slotIdx);
+          if (!expected || entry.movie.k !== expected.k) {
+            releaseSlot(slotIdx);
+          }
+        }
+        syncViewport(true);
+        updateHud();
+      }
+    } catch (_) {}
+  }
+
+  setInterval(() => {
+    if (cinemaOpen) return;
+    for (const entry of mounted.values()) {
+      if (entry.video.paused && entry.video.readyState >= 2) {
+        entry.video.play().catch(() => {});
+      }
+    }
+  }, 4000);
+
+  viewportEl.focus();
+  loadServerConfig().then(() => {
+    pollCatalog();
+  });
+  setInterval(pollCatalog, 5000);
+  requestAnimationFrame(animationLoop);
+})();
+</script>
+</body>
+</html>
